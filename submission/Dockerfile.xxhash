@@ -1,0 +1,14 @@
+FROM misokaio/ghfjdk:v0.25.1@sha256:1d03088f685d6c8ddab5078d3b3374ba3e85ed557e5baa50aca9770b6cabdf18
+
+# vLLM's xxHash prefix-cache mode is optional because the Python wheel is not
+# part of the stock image.  This image exists solely for a controlled A/B of
+# CPU hashing overhead on the three-core grading instance.
+RUN python3 -m pip install \
+      --no-cache-dir \
+      --disable-pip-version-check \
+      --only-binary=:all: \
+      xxhash==3.6.0 \
+    && python3 -c "import xxhash; assert xxhash.xxh128(b'ai-race').hexdigest()"
+
+LABEL org.opencontainers.image.version="v0.25.1-xxhash1" \
+      org.opencontainers.image.description="vLLM 0.25.1 with optional xxHash prefix-cache hashing"

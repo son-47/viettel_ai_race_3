@@ -1,0 +1,14 @@
+FROM misokaio/ghfjdk:v0.25.1@sha256:1d03088f685d6c8ddab5078d3b3374ba3e85ed557e5baa50aca9770b6cabdf18
+
+COPY warmup/race_warmup.py /usr/local/lib/python3.12/dist-packages/race_warmup.py
+COPY warmup/api_server_warmup.patch /tmp/api_server_warmup.patch
+
+RUN cd /usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai \
+    && patch --batch --forward api_server.py < /tmp/api_server_warmup.patch \
+    && python3 -m py_compile \
+        api_server.py \
+        /usr/local/lib/python3.12/dist-packages/race_warmup.py \
+    && rm /tmp/api_server_warmup.patch
+
+LABEL org.opencontainers.image.version="v0.25.1-warmup1" \
+      org.opencontainers.image.description="vLLM 0.25.1 with pre-serve LFM2.5 kernel warmup"

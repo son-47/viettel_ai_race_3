@@ -1,0 +1,53 @@
+# Accuracy-safe fallback: identical to the primary LFM2.5 submission except
+# that model weights stay in BF16. Keep as a separate post-online candidate;
+# the primary ERS submission remains docker-compose.yml with online FP8.
+services:
+  model:
+    image: misokaio/ghfjdk:v0.25.1@sha256:1d03088f685d6c8ddab5078d3b3374ba3e85ed557e5baa50aca9770b6cabdf18
+    environment:
+    - HF_HUB_OFFLINE=1
+    - TRANSFORMERS_OFFLINE=1
+    - VLLM_USE_FASTOKENS=1
+    - VLLM_CONFIGURE_LOGGING=0
+    - VLLM_HTTP_TIMEOUT_KEEP_ALIVE=600
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --max-model-len=32768
+      - --optimization-level=3
+      - --gpu-memory-utilization=0.85
+      - --tensor-parallel-size=1
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --max-num-batched-tokens=8192
+      - '--override-generation-config={
+          "temperature": 0.0,
+          "top_p": 1.0,
+          "top_k": 1,
+          "min_p": 0.0,
+          "presence_penalty": 0.0,
+          "repetition_penalty": 1.0,
+          "max_tokens": 300
+        }'
+      - --max-num-seqs=32
+      - --disable-uvicorn-access-log
+      - --language-model-only
+      - --skip-mm-profiling
+      - --no-enable-log-requests
+      - --disable-log-stats
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

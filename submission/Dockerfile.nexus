@@ -1,0 +1,9 @@
+FROM misokaio/ghfjdk:v0.25.1
+
+COPY sched/nexus_scheduler.py /usr/local/lib/python3.12/dist-packages/nexus_scheduler.py
+
+RUN python3 -m py_compile \
+      /usr/local/lib/python3.12/dist-packages/nexus_scheduler.py
+
+LABEL org.opencontainers.image.version="v0.25.3-nexus" \
+      org.opencontainers.image.description="vLLM 0.25.1 with a phase-aware Nexus scheduler for Viettel AI Race 2026"

@@ -1,0 +1,64 @@
+services:
+  model:
+    image: misokaio/ghfjdk:v0.25.1
+    environment:
+    - HF_HUB_OFFLINE=1
+    - TRANSFORMERS_OFFLINE=1
+    # - VLLM_USE_RUST_FRONTEND=1
+    - VLLM_USE_FASTOKENS=1
+    - VLLM_CONFIGURE_LOGGING=0
+    # Score-aware scheduler knobs for the published 10-400ms TTFT metric.
+    - DL_TTFT_FLOOR_MS=10
+    - DL_TTFT_CEILING_MS=400
+    - DL_FRONTEND_BUDGET_MS=10
+    - DL_EFF_PREFILL_TPS=60000
+    - DL_SCORE_GAMMA=2
+    - DL_RETRIAGE_MS=20
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model
+      - --quantization=fp8          # native online bf16->fp8 (H200 coherent, no temp)
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      # Workload max is ~4,400 input + 300 output tokens; 8,192 keeps headroom.
+      - --max-model-len=8192
+      - --optimization-level=3
+      - --gpu-memory-utilization=0.85
+      # - --long-prefill-token-threshold=2048
+      - --tensor-parallel-size=1
+      - --scheduling-policy=priority
+      - --scheduler-cls=deadline_sched.DeadlineScheduler
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --max-num-batched-tokens=5120
+      - --max-num-seqs=4
+      - --performance-mode=interactivity                   # sweep-confirmed optimal
+      - --disable-uvicorn-access-log
+      - '--override-generation-config={
+          "temperature": 0.0,
+          "top_p": 1.0,
+          "top_k": 1,
+          "min_p": 0.0,
+          "presence_penalty": 0.0,
+          "repetition_penalty": 1.0,
+          "max_tokens": 300
+        }'
+      - --language-model-only
+      - --skip-mm-profiling
+      - --no-enable-log-requests
+      - --disable-access-log-for-endpoints=/health,/metrics,/ping
+      - --disable-log-stats
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -1,0 +1,6 @@
+# Phase-0 harness deps (lightweight; no GPU/model required to run the pipeline locally).
+aiohttp>=3.9
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+# transformers is OPTIONAL (only if you want exact tokenization instead of word≈token).

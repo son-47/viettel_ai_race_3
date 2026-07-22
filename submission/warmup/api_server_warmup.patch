@@ -1,0 +1,12 @@
+--- api_server.py
++++ api_server.py
+@@ -612,6 +612,9 @@ async def build_and_serve(
+     logger.info("Supported tasks: %s", supported_tasks)
+     app = build_app(args, supported_tasks, model_config)
+     await init_app_state(engine_client, app.state, args, supported_tasks)
++    from race_warmup import warmup_engine
++
++    await warmup_engine(engine_client)
+ 
+     logger.info("Starting vLLM server on %s", listen_address)
+ 
