@@ -40,10 +40,17 @@ def case_name(payload: dict) -> str:
 
 
 def result_scores(payload: dict) -> dict[tuple[int, int], float]:
-    return {
+    scores = {
         (int(item["conversation_id"]), int(item["turn_index"])): request_score(item)
         for item in payload["results"]
     }
+    config = payload["summary"]["config"]
+    for conversation_id in range(int(config["num_conversations"])):
+        for turn_index in range(int(config["turns"])):
+            # A failed turn stops the remaining turns in that conversation.
+            # The grader and benchmark summary score those missing turns as 0.
+            scores.setdefault((conversation_id, turn_index), 0.0)
+    return scores
 
 
 def percentile(values: list[float], fraction: float) -> float:
