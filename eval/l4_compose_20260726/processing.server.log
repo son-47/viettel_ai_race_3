@@ -1,10 +1,0 @@
-model-1  | [fastokens] patch_transformers: successfully patched transformers v5.13.1
-model-1  | Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
-model-1  | Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  1.37it/s]
-model-1  | Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  1.37it/s]
-model-1  | 
-model-1  | Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   0%|          | 0/11 [00:00<?, ?it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  36%|███▋      | 4/11 [00:00<00:00, 37.13it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  82%|████████▏ | 9/11 [00:00<00:00, 38.92it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|██████████| 11/11 [00:00<00:00, 34.53it/s]
-model-1  | Capturing CUDA graphs (decode, FULL):   0%|          | 0/7 [00:00<?, ?it/s]Capturing CUDA graphs (decode, FULL):  14%|█▍        | 1/7 [00:00<00:01,  4.62it/s]Capturing CUDA graphs (decode, FULL):  29%|██▊       | 2/7 [00:00<00:01,  4.57it/s]Capturing CUDA graphs (decode, FULL):  71%|███████▏  | 5/7 [00:00<00:00, 11.59it/s]Capturing CUDA graphs (decode, FULL): 100%|██████████| 7/7 [00:00<00:00,  9.20it/s]Capturing CUDA graphs (decode, FULL): 100%|██████████| 7/7 [00:00<00:00,  8.52it/s]
-model-1  | INFO:     Started server process [1]
-model-1  | INFO:     Waiting for application startup.
-model-1  | INFO:     Application startup complete.

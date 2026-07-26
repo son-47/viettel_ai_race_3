@@ -98,6 +98,45 @@ case "$case_name" in
       --enable-mamba-cache-stochastic-rounding
     )
     ;;
+  fused_silu_off|fused_silu_on|fused_rmsnorm_off|fused_rmsnorm_on)
+    # Reproduce the 65.71 portal scheduler while allowing same-image fusion
+    # ablations.  Explicitly set every opt-in bit so an image ENV default
+    # cannot contaminate the comparison.
+    max_model_len=8192
+    max_batched_tokens=4096
+    max_seqs=32
+    extra_env+=(
+      --env VLLM_LFM25_FUSED_SHORTCONV=1
+      --env VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      --env VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+    )
+    case "$case_name" in
+      fused_silu_off)
+        extra_env+=(
+          --env VLLM_LFM25_FUSED_SILU_FP8=0
+          --env VLLM_LFM25_FUSED_RMSNORM_FP8=0
+        )
+        ;;
+      fused_silu_on)
+        extra_env+=(
+          --env VLLM_LFM25_FUSED_SILU_FP8=1
+          --env VLLM_LFM25_FUSED_RMSNORM_FP8=0
+        )
+        ;;
+      fused_rmsnorm_off)
+        extra_env+=(
+          --env VLLM_LFM25_FUSED_SILU_FP8=1
+          --env VLLM_LFM25_FUSED_RMSNORM_FP8=0
+        )
+        ;;
+      fused_rmsnorm_on)
+        extra_env+=(
+          --env VLLM_LFM25_FUSED_SILU_FP8=1
+          --env VLLM_LFM25_FUSED_RMSNORM_FP8=1
+        )
+        ;;
+    esac
+    ;;
   o2) optimization_level=2 ;;
   gpu92) gpu_memory_utilization=0.92 ;;
   gpu95) gpu_memory_utilization=0.95 ;;

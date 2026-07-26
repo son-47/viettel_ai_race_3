@@ -16,6 +16,7 @@
 
 | Compose | ERS | Δ ERS vs 63.94 | TTFT p50 | TTFT p95 | TPOT p50 | TPOT p95 |
 |---|---:|---:|---:|---:|---:|---:|
+| `docker-compose_rmsnorm_fp8_candidate.yml` | 0.425014 | −1.856% | 50.061 ms | 71.304 ms | 7.800 ms | 9.000 ms |
 | `docker-compose_silu_fp8_candidate.yml` | **0.436072** | **+0.697%** | 43.718 ms | 71.817 ms | **7.822 ms** | 8.909 ms |
 | `docker-compose_shortconv_fused_64.35.yml` | 0.434950 | +0.438% | 43.733 ms | 72.499 ms | 7.842 ms | 8.911 ms |
 | `docker-compose_63.94.yml` | 0.433053 | baseline | 43.816 ms | 71.559 ms | 7.899 ms | 8.944 ms |
@@ -30,9 +31,16 @@
    giảm 2.43%; không nên chọn cấu hình này cho portal.
 4. Kết quả này xác nhận candidate chạy được trên SM89/L4; vẫn cần xem đây là
    xếp hạng tham khảo cho H200 MIG, không suy diễn trực tiếp thành điểm portal.
+5. Candidate RMSNorm→FP8 mới hoàn tất 420/420 nhưng ERS 0.425014, thấp hơn
+   SiLU-FP8 khoảng 2.54% và thấp hơn baseline 63.94 khoảng 1.86%; chưa nên
+   promote candidate này lên portal. TTFT p50 của nó cũng cao hơn 6.34 ms so
+   với SiLU-FP8. Kết quả dùng scheduler của compose 65.71 (max-model-len 8192,
+   max-num-batched-tokens 4096, max-num-seqs 32), nên đây là A/B tham khảo chứ
+   không phải cô lập riêng chi phí RMSNorm.
 
 ## Artifact
 
-JSON và server log đã kéo về `eval/l4_compose_20260726/`. Runner provisioning
+JSON và server log của các case trước đã kéo về `eval/l4_compose_20260726/`; JSON
+candidate RMSNorm mới là `eval/l4_compose_20260726/rmsnorm_fp8.json`. Runner provisioning
 nằm ở `scripts/run_l4_compose_benchmark.sh`; override chỉ mount model/cache/
 benchmark và không sửa bốn compose gốc.

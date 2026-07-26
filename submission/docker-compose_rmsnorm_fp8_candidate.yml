@@ -1,8 +1,8 @@
-# Candidate only. Push the image, pin its registry digest, and complete paired
-# H200 A/B before using this compose as one of the five post-online choices.
+# Candidate only. Build/push, pin the registry digest, run the GPU smoke test,
+# then use the paired same-image A/B before spending a portal submission.
 services:
   model:
-    image: misokaio/ghfjdk@sha256:bbda70fede826b43dbd8b92bb03fb880009c9c55162df4ba8a98f0325e9be2f4
+    image: misokaio/ghfjdk:v0.25.1-lfm25-rmsnorm-fp8
     environment:
       - HF_HUB_OFFLINE=1
       - TRANSFORMERS_OFFLINE=1
@@ -12,6 +12,7 @@ services:
       - VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
       - VLLM_LFM25_FUSED_QK_NORM_ROPE=1
       - VLLM_LFM25_FUSED_SILU_FP8=1
+      - VLLM_LFM25_FUSED_RMSNORM_FP8=1
     entrypoint:
       - python3 #Don't change this to vllm-server
       - -m #Don't change this to vllm-server
@@ -27,7 +28,9 @@ services:
       - --tensor-parallel-size=1
       - --enable-prefix-caching
       - --enable-chunked-prefill
-      - --performance-mode=interactivity
+      - --max-model-len=8192
+      - --max-num-batched-tokens=4096
+      - --max-num-seqs=32
       - --disable-uvicorn-access-log
       - --language-model-only
       - --skip-mm-profiling

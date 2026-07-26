@@ -2,7 +2,22 @@
 
 Ngày tổng hợp: 2026-07-26
 
-Tài liệu này hợp nhất sáu báo cáo nghiên cứu/benchmark:
+## Cập nhật buổi chiều: portal 65.71 và fusion kế tiếp
+
+`submission/docker-compose_silu_fp8_65.71.yml` đã đạt **65.71**, với TTFT
+p50/p95 là **32/47 ms**, TBT median 4 ms và 4 request lỗi. Đây là mốc portal cao
+nhất mới, thay cho 64.35.
+
+Image 65.71 đã gộp hai nhóm fusion: Dockerfile SiLU-FP8 kế thừa trực tiếp image
+ShortConv/QK/no-vstack, và compose bật tất cả các flag. Tuy nhiên compose cũng
+đổi scheduler sang `8192/4096/32`; vì vậy cần paired same-image ablation trước
+khi kết luận riêng SiLU-FP8 đóng góp bao nhiêu.
+
+Hướng kế tiếp đã được cài là nối fused CUDA op add-RMSNorm-dynamic-FP8 có sẵn
+trong vLLM vào 16 W13 và 6 QKV projection của LFM2.5. Chi tiết và quy trình A/B
+nằm trong `LFM25_RMSNORM_FP8_FUSION_20260726.md`.
+
+Tài liệu này hợp nhất bảy báo cáo nghiên cứu/benchmark:
 
 - `L4_COMPOSE_EVAL_20260726.md`
 - `LFM25_DEEP_OPTIMIZATION_20260726.md`
@@ -10,22 +25,24 @@ Tài liệu này hợp nhất sáu báo cáo nghiên cứu/benchmark:
 - `LFM25_OPTIMIZATION_20260722.md`
 - `LFM25_RESEARCH_OPTIMIZATION_20260723.md`
 - `LFM25_SILU_FP8_FUSION_20260726.md`
+- `LFM25_RMSNORM_FP8_FUSION_20260726.md`
 
 ## 1. Kết luận ngắn gọn
 
 ### Kết quả đã được portal xác nhận
 
-Image kernel-fusion là điểm cao nhất đã quan sát:
+Image combined fusion là điểm cao nhất đã quan sát:
 
 ```text
-misokaio/ghfjdk:v0.25.1-lfm25-fused
-digest: sha256:53d1892ca842ffa2f5e3113f0f775450701bacb7c014d8f497bd63e6ad61d401
-portal final_score: 64.35
+misokaio/ghfjdk
+digest: sha256:bbda70fede826b43dbd8b92bb03fb880009c9c55162df4ba8a98f0325e9be2f4
+portal final_score: 65.71
 ```
 
-So với mốc trước 63.94, điểm tăng 0.41. So với stock H200 cũ 63.82, điểm
-tăng 0.53. Tuy nhiên đây mới là một lượt chấm và số request lỗi tăng từ 5 lên
-6, nên chưa thể khẳng định gain ổn định.
+So với mốc fusion buổi sáng 64.35, điểm tăng 1.36; TTFT p50/p95 giảm từ 38/51
+ms xuống 32/47 ms và failed count giảm từ 6 xuống 4. Image này đã chứa cả
+ShortConv/QK/no-vstack và SiLU-FP8. Scheduler cũng thay đổi, nên số portal chưa
+phải là ablation riêng cho SiLU-FP8.
 
 ### Candidate mới có tín hiệu tốt nhất trên L4
 
@@ -47,15 +64,14 @@ Replay đủ 420 request trên Lightning L4 cho kết quả tốt nhất trong b
 | Processing flags | 0.422525 | −2.431% | 49.916 ms | 7.942 ms | 420/420 |
 
 ERS trên bảng là điểm synthetic replay của harness, không phải điểm private
-portal. Candidate SiLU-FP8 chưa có kết quả H200 end-to-end/output-FP8
-correctness, vì vậy chưa được gọi là bản promote.
+portal. Sau replay này, combined SiLU-FP8 đã được portal xác nhận ở 65.71;
+paired same-image ablation vẫn cần thiết để tách gain của kernel khỏi scheduler.
 
 ### Quyết định thực tế
 
-- Nếu cần dùng một image đã có điểm portal: dùng kernel-fusion 64.35.
-- Nếu có slot để thử nghiệm: dùng compose SiLU-FP8 digest ở trên; đây là ứng
-  viên mới có thứ hạng L4 tốt nhất, nhưng phải chạy paired A/B trên H200 trước
-  khi thay bản 64.35.
+- Nếu cần dùng image đã có điểm portal tốt nhất: dùng compose 65.71 đã pin digest.
+- Nếu có slot thử nghiệm: build candidate RMSNorm-FP8 mới, chạy đủ smoke H200
+  và paired same-image A/B trước khi nộp portal.
 - Không dùng `docker-compose_processing.yml`.
 - Không dùng Medusa trên L4.
 - Không dùng GPTQ/AWQ trong submission nếu BTC chưa xác nhận checkpoint offline
@@ -322,30 +338,34 @@ RATE_SCALE=1 WARMUP=0 \
 Runner hiện tại đã dùng để tạo `eval/l4_compose_20260726/` và báo cáo
 `L4_COMPOSE_EVAL_20260726.md`.
 
-### Trên H200/H100 trước khi promote SiLU-FP8
+### Trên H200/H100 trước khi promote RMSNorm-FP8
 
-1. Chạy smoke regression ShortConv, QK và SiLU output-FP8.
+1. Chạy smoke regression ShortConv, QK, SiLU-FP8 và RMSNorm-FP8.
 2. Chạy paired matrix xen kẽ control/candidate/control/candidate/control với
    `RATE_SCALE=1`, `WARMUP=0`.
 3. Chỉ promote nếu cả hai candidate run thắng control lân cận ở ERS/TPOT,
    không tăng failed count và output-FP8 correctness pass.
 4. Pin registry digest trong compose; không dùng tag mutable.
 
-Kernel-fusion 64.35 vẫn là fallback an toàn vì đã có portal evidence. Candidate
-SiLU không được coi là thắng chỉ dựa trên proxy L4.
+Combined fusion 65.71 là fallback tốt nhất vì đã có portal evidence. Candidate
+RMSNorm-FP8 không được coi là thắng chỉ dựa trên build/smoke local.
 
 ## 12. Artifact và tài liệu tham khảo
 
 Các file quan trọng:
 
 - `submission/docker-compose_shortconv_fused_64.35.yml`
-- `submission/docker-compose_silu_fp8_candidate.yml`
+- `submission/docker-compose_silu_fp8_65.71.yml`
+- `submission/docker-compose_rmsnorm_fp8_candidate.yml`
 - `submission/lfm25_fused_short_conv.py`
 - `submission/lfm25_fused_qk_norm_rope.py`
 - `submission/lfm25_fused_silu_fp8.py`
+- `submission/lfm25_fused_rmsnorm_fp8.py`
 - `scripts/lfm25_remote_ab.sh`
 - `scripts/lfm25_matrix_shortconv_fused_20260726.sh`
 - `scripts/lfm25_matrix_silu_fp8_20260726.sh`
+- `scripts/lfm25_matrix_fusion_ablation_20260726.sh`
+- `scripts/lfm25_matrix_rmsnorm_fp8_20260726.sh`
 - `eval/l4_compose_20260726/`
 
 Nguồn kỹ thuật chính:
@@ -361,6 +381,5 @@ Nguồn kỹ thuật chính:
 ## Tóm tắt một câu
 
 Sau khi stock flags, online quantization và speculative decoding chạm trần,
-đường có bằng chứng tốt nhất là kernel fusion: bản fused đã đạt 64.35 trên
-portal; SiLU-FP8 là candidate mới đứng đầu L4 nhưng chỉ nên thay thế sau khi
-được xác nhận bằng paired H200 A/B và correctness output-FP8.
+combined kernel fusion đã đạt 65.71 trên portal; bước kế tiếp là fused
+add-RMSNorm-dynamic-FP8, nhưng chỉ promote sau paired H200 A/B và correctness.
