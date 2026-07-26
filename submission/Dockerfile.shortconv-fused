@@ -1,0 +1,30 @@
+FROM misokaio/ghfjdk:v0.25.1@sha256:1d03088f685d6c8ddab5078d3b3374ba3e85ed557e5baa50aca9770b6cabdf18
+
+ARG LFM25_FUSED_SHORTCONV=1
+ARG LFM25_BYPASS_SINGLE_VSTACK=1
+ARG LFM25_FUSED_QK_NORM_ROPE=1
+
+ENV VLLM_LFM25_FUSED_SHORTCONV=${LFM25_FUSED_SHORTCONV} \
+    VLLM_LFM25_BYPASS_SINGLE_VSTACK=${LFM25_BYPASS_SINGLE_VSTACK} \
+    VLLM_LFM25_FUSED_QK_NORM_ROPE=${LFM25_FUSED_QK_NORM_ROPE}
+
+COPY apply_lfm25_shortconv_fusion.py /tmp/apply_lfm25_shortconv_fusion.py
+COPY lfm25_fused_short_conv.py /tmp/lfm25_fused_short_conv.py
+COPY lfm25_fused_qk_norm_rope.py /tmp/lfm25_fused_qk_norm_rope.py
+COPY test_lfm25_fused_short_conv.py /opt/lfm25/test_lfm25_fused_short_conv.py
+COPY test_lfm25_fused_qk_norm_rope.py /opt/lfm25/test_lfm25_fused_qk_norm_rope.py
+
+RUN python3 /tmp/apply_lfm25_shortconv_fusion.py \
+      --kernel-source /tmp/lfm25_fused_short_conv.py \
+      --qk-kernel-source /tmp/lfm25_fused_qk_norm_rope.py \
+      --self-test \
+    && python3 -m py_compile \
+      /tmp/apply_lfm25_shortconv_fusion.py \
+      /tmp/lfm25_fused_short_conv.py \
+      /tmp/lfm25_fused_qk_norm_rope.py \
+      /opt/lfm25/test_lfm25_fused_short_conv.py \
+      /opt/lfm25/test_lfm25_fused_qk_norm_rope.py \
+    && rm -f \
+      /tmp/apply_lfm25_shortconv_fusion.py \
+      /tmp/lfm25_fused_short_conv.py \
+      /tmp/lfm25_fused_qk_norm_rope.py

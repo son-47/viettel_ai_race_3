@@ -6,6 +6,10 @@ set -euo pipefail
 
 case_name="${1:-control}"
 image="${IMAGE:-misokaio/ghfjdk:v0.25.1}"
+medusa_image="${MEDUSA_IMAGE:-vinhdq17/vllm_openai:r2-mtp-v2@sha256:362cde8ce35879fdf90f9b14b95892ad48821e60418a41052e0593632d69c71f}"
+medusa_fused_image="${MEDUSA_FUSED_IMAGE:-misokaio/ghfjdk:v0.25.1-medusa-fused-k3}"
+shortconv_fp8_image="${SHORTCONV_FP8_IMAGE:-vinhdq17/vllm_openai:r2-int4-v1@sha256:02c9bd96aaa093181a9d6f6c869f970f99e2835ccaa0235da99d8b47d75a4673}"
+lean_image="${LEAN_IMAGE:-vinhdq17/vllm_openai:r2-lean-v1@sha256:830c965106119ad3d9bafffa7a5b78242f3bb9e3fcd8442cf26f7a5606abaffc}"
 workspace="${WORKSPACE:-/home/zeus/content}"
 model_dir="${MODEL_DIR:-$workspace/model-lfm25}"
 draft_model_dir="${DRAFT_MODEL_DIR:-$workspace/model-lfm25-350m}"
@@ -14,6 +18,7 @@ rate_scale="${RATE_SCALE:-4}"
 warmup="${WARMUP:-1}"
 result_dir="${RESULT_DIR:-$workspace/results/lfm25_ab}"
 weight_mode="${WEIGHT_MODE:-fp8}"
+collect_spec_metrics="${COLLECT_SPEC_METRICS:-0}"
 engine_cache_dir="${ENGINE_CACHE_DIR:-$workspace/vllm-cache}"
 mkdir -p "$result_dir" "$engine_cache_dir"
 
@@ -162,6 +167,48 @@ case "$case_name" in
     extra_mount_args+=(-v "$draft_model_dir:/draft-model:ro")
     extra_args+=("--speculative-config={\"method\":\"draft_model\",\"model\":\"$spec_model\",\"num_speculative_tokens\":$spec_tokens,\"draft_tensor_parallel_size\":1}")
     ;;
+  medusa_image_control)
+    # No speculative config: controls for all image-level changes in r2-mtp-v2.
+    image="$medusa_image"
+    fastokens=0
+    extra_env+=(--env VLLM_LEAN=0 --env VLLM_LEAN_UPD=0)
+    ;;
+  medusa1|medusa2|medusa3)
+    # r2-mtp-v2 carries /medusa plus the ShortConv rollback/state-shape fixes
+    # required by LFM2's hybrid cache. Disable fastokens because this control
+    # image does not bundle that optional wheel.
+    image="$medusa_image"
+    fastokens=0
+    spec_tokens="${case_name#medusa}"
+    extra_env+=(--env VLLM_LEAN=0 --env VLLM_LEAN_UPD=0)
+    extra_args+=("--speculative-config={\"method\":\"medusa\",\"model\":\"/medusa\",\"num_speculative_tokens\":$spec_tokens,\"draft_tensor_parallel_size\":1}")
+    ;;
+  medusa_fused_control)
+    image="$medusa_fused_image"
+    fastokens=1
+    extra_env+=(--env VLLM_LEAN=0 --env VLLM_LEAN_UPD=0)
+    ;;
+  medusa_fused1|medusa_fused2|medusa_fused3)
+    # Requires submission/Dockerfile.medusa-fused to have been built and the
+    # selected MEDUSA_FUSED_IMAGE tag to exist in a public registry.
+    image="$medusa_fused_image"
+    fastokens=1
+    spec_tokens="${case_name#medusa_fused}"
+    extra_env+=(--env VLLM_LEAN=0 --env VLLM_LEAN_UPD=0)
+    extra_args+=("--speculative-config={\"method\":\"medusa\",\"model\":\"/medusa\",\"num_speculative_tokens\":$spec_tokens,\"draft_tensor_parallel_size\":1}")
+    ;;
+  shortconv_fp8)
+    # Backport of upstream vLLM PR #48917: FP8 reaches all 20 ShortConv
+    # projection linears instead of silently leaving them in BF16.
+    image="$shortconv_fp8_image"
+    fastokens=0
+    ;;
+  lean_decode)
+    # CPU/control-plane experiment for the 3-vCPU grader. Keep separate from
+    # Medusa so any gain or regression has one cause.
+    image="$lean_image"
+    fastokens=0
+    ;;
   bnb4_suffix16)
     extra_deps+=("bitsandbytes>=0.49.2" arctic-inference)
     quant_args=(--quantization=bitsandbytes)
@@ -248,9 +295,17 @@ if [[ "$prefix_caching" == 0 ]]; then
   prefix_args=(--no-enable-prefix-caching)
 fi
 
+log_stats_args=(--disable-log-stats)
+if [[ "$collect_spec_metrics" == 1 ]]; then
+  # vLLM does not export speculative counters when log stats are disabled.
+  # Use this only for a profiling run, not for the final latency comparison.
+  log_stats_args=()
+fi
+
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$case_name-r${rate_scale}"
 result_file="$result_dir/$run_id.json"
 server_log="$result_dir/$run_id.server.log"
+metrics_file="$result_dir/$run_id.metrics"
 
 echo "CASE=$case_name IMAGE=$image WEIGHT_MODE=$weight_mode WARMUP=$warmup RATE_SCALE=$rate_scale"
 docker run -d \
@@ -289,7 +344,7 @@ docker run -d \
   --language-model-only \
   --skip-mm-profiling \
   --no-enable-log-requests \
-  --disable-log-stats \
+  "${log_stats_args[@]}" \
   "${extra_args[@]}" >/dev/null
 
 for attempt in $(seq 1 180); do
@@ -358,9 +413,10 @@ run_client \
   --rate-scale="$rate_scale" \
   --timeout=180
 
-curl -fsS http://127.0.0.1:8000/metrics >"$result_dir/$run_id.metrics" || true
+curl -fsS http://127.0.0.1:8000/metrics >"$metrics_file" || true
 docker logs "$server_name" >"$server_log" 2>&1 || true
 nvidia-smi --query-gpu=name,memory.total,memory.free,utilization.gpu \
   --format=csv,noheader
 echo "RESULT=$result_file"
 echo "SERVER_LOG=$server_log"
+echo "METRICS=$metrics_file"
