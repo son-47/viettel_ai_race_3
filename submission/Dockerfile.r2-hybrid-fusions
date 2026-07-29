@@ -1,0 +1,11 @@
+FROM vinhdq17/vllm_openai@sha256:3e13f523c13f8ab45c14a7ae880e4c666686d981441bbef8894d2467b7b97d6d
+
+ENV VLLM_LFM25_FUSED_SHORTCONV=1 VLLM_LFM25_BYPASS_SINGLE_VSTACK=1 VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+
+COPY apply_r2_lfm25_hybrid_fusions.py /tmp/apply_r2_lfm25_hybrid_fusions.py
+COPY lfm25_fused_short_conv.py /tmp/lfm25_fused_short_conv.py
+COPY lfm25_fused_qk_norm_rope.py /tmp/lfm25_fused_qk_norm_rope.py
+COPY test_r2_lfm25_fused_short_conv.py /opt/lfm25/test_r2_lfm25_fused_short_conv.py
+COPY test_r2_lfm25_qk_norm_rope.py /opt/lfm25/test_r2_lfm25_qk_norm_rope.py
+
+RUN python3 /tmp/apply_r2_lfm25_hybrid_fusions.py --short-conv-kernel-source /tmp/lfm25_fused_short_conv.py --qk-kernel-source /tmp/lfm25_fused_qk_norm_rope.py && python3 -m py_compile /tmp/apply_r2_lfm25_hybrid_fusions.py /tmp/lfm25_fused_short_conv.py /tmp/lfm25_fused_qk_norm_rope.py /opt/lfm25/test_r2_lfm25_fused_short_conv.py /opt/lfm25/test_r2_lfm25_qk_norm_rope.py && rm -f /tmp/apply_r2_lfm25_hybrid_fusions.py /tmp/lfm25_fused_short_conv.py /tmp/lfm25_fused_qk_norm_rope.py

@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+
+# Build Fastokens while network is available; the portal/grader runs offline.
+FROM python:3.12-slim AS fastokens
+
+RUN python3 -m pip install \
+      --target=/fastokens \
+      --no-cache-dir \
+      --disable-pip-version-check \
+      --only-binary=:all: \
+      fastokens==0.2.0 \
+    && PYTHONPATH=/fastokens python3 -c \
+      "import importlib.metadata as m, fastokens; assert m.version('fastokens') == '0.2.0'; print('fastokens installed:', fastokens.__file__)"
+
+FROM vinhdq17/vllm_openai@sha256:3e13f523c13f8ab45c14a7ae880e4c666686d981441bbef8894d2467b7b97d6d
+
+# Keep the package in the runtime image; no network is needed when serving.
+COPY --from=fastokens /fastokens/ /opt/fastokens/
+ENV PYTHONPATH=/opt/fastokens:${PYTHONPATH}
+ENV VLLM_LFM25_FUSED_SHORTCONV=1 VLLM_LFM25_BYPASS_SINGLE_VSTACK=1 VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+
+COPY apply_r2_lfm25_hybrid_fusions.py /tmp/apply_r2_lfm25_hybrid_fusions.py
+COPY lfm25_fused_short_conv.py /tmp/lfm25_fused_short_conv.py
+COPY lfm25_fused_qk_norm_rope.py /tmp/lfm25_fused_qk_norm_rope.py
+COPY test_r2_lfm25_fused_short_conv.py /opt/lfm25/test_r2_lfm25_fused_short_conv.py
+COPY test_r2_lfm25_qk_norm_rope.py /opt/lfm25/test_r2_lfm25_qk_norm_rope.py
+
+RUN python3 /tmp/apply_r2_lfm25_hybrid_fusions.py --short-conv-kernel-source /tmp/lfm25_fused_short_conv.py --qk-kernel-source /tmp/lfm25_fused_qk_norm_rope.py \
+    && PYTHONPATH=/opt/fastokens python3 -c "import importlib.metadata as m, fastokens; assert m.version('fastokens') == '0.2.0'; print('runtime fastokens:', fastokens.__file__)" \
+    && python3 -m py_compile /tmp/apply_r2_lfm25_hybrid_fusions.py /tmp/lfm25_fused_short_conv.py /tmp/lfm25_fused_qk_norm_rope.py /opt/lfm25/test_r2_lfm25_fused_short_conv.py /opt/lfm25/test_r2_lfm25_qk_norm_rope.py \
+    && rm -f /tmp/apply_r2_lfm25_hybrid_fusions.py /tmp/lfm25_fused_short_conv.py /tmp/lfm25_fused_qk_norm_rope.py

@@ -1,0 +1,89 @@
+# Fastokens-enabled hybrid candidate. Build and push the image, then replace
+# the mutable tag below with its public sha256 digest before portal submission.
+# Điểm
+# 61.9900
+# Đã chấm 28 phút trước
+
+# Chỉ số
+
+# ers
+# 61.99
+# f_delta
+# 1
+# penalty
+# 1
+# final_score
+# 61.99
+# total_count
+# 420
+# ttft_p50_ms
+# 63
+# ttft_p95_ms
+# 105
+# failed_count
+# 14
+# warmup_count
+# 0
+# accuracy_drop
+# 0
+# tbt_median_ms
+# 3
+# tokens_per_sec
+# 0.0497
+services:
+  model:
+    image: misokaio/ghfjdk:r2-v028-marlin-dspark-k3-s32-fastokens
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - VLLM_USE_FASTOKENS=1
+      - VLLM_CONFIGURE_LOGGING=0
+      - VLLM_ENABLE_V1_MULTIPROCESSING=0
+      - VLLM_TOKCACHE=1
+      - VLLM_TOKCACHE_SPLICE=1
+      - VLLM_SSE_SPLIT=0
+      - VLLM_CONV_FP8=1
+      - VLLM_TEST_FORCE_FP8_MARLIN=1
+      - VLLM_LFM25_FUSED_SHORTCONV=1
+      - VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      - VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - RAYON_NUM_THREADS=1
+      - TOKENIZERS_PARALLELISM=false
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=fp8
+      - --linear-backend=marlin
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.92
+      - --tensor-parallel-size=1
+      - --enable-prefix-caching
+      - --async-scheduling
+      - --max-num-batched-tokens=4096
+      - --max-num-seqs=32
+      - --override-generation-config
+      - '{"temperature": 0.0}'
+      - --speculative-config
+      - '{"method":"dspark","model":"/draft","num_speculative_tokens":3,"draft_tensor_parallel_size":1,"quantization":"fp8"}'
+      - --disable-uvicorn-access-log
+      - --no-enable-log-requests
+      - --disable-log-stats
+    ports:
+      - "8000:8000"
+    # ipc: "host"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

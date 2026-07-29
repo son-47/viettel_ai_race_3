@@ -1,0 +1,80 @@
+# Diagnostic/promotion candidate: R2 Marlin without DSpark or custom SSE split,
+# using the 32-request admission cap that previously minimized queueing.
+# Điểm
+# 59.8000
+# Đã chấm 10 phút trước
+
+# Chỉ số
+
+# ers
+# 59.8
+# f_delta
+# 1
+# penalty
+# 1
+# final_score
+# 59.8
+# total_count
+# 420
+# ttft_p50_ms
+# 50
+# ttft_p95_ms
+# 97
+# failed_count
+# 7
+# warmup_count
+# 0
+# accuracy_drop
+# 0
+# tbt_median_ms
+# 4
+# tokens_per_sec
+# 0.0515
+services:
+  model:
+    image: vinhdq17/vllm_openai@sha256:3e13f523c13f8ab45c14a7ae880e4c666686d981441bbef8894d2467b7b97d6d
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - VLLM_ENABLE_V1_MULTIPROCESSING=0
+      - VLLM_TOKCACHE=1
+      - VLLM_TOKCACHE_SPLICE=1
+      - VLLM_SSE_SPLIT=0
+      - VLLM_CONV_FP8=1
+      - VLLM_TEST_FORCE_FP8_MARLIN=1
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - RAYON_NUM_THREADS=1
+      - TOKENIZERS_PARALLELISM=false
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=fp8
+      - --linear-backend=marlin
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.95
+      - --tensor-parallel-size=1
+      - --enable-prefix-caching
+      - --async-scheduling
+      - --max-num-batched-tokens=4096
+      - --max-num-seqs=32
+      - --override-generation-config
+      - '{"temperature": 0.0}'
+      - --no-enable-log-requests
+      - --disable-log-stats
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -1,0 +1,79 @@
+# Experimental only: ShortConv out_proj FP8 with conv+quant fusion.
+# Keep every runtime flag identical to the scored 65.71 compose.
+# Public Docker Hub image pinned to its immutable registry digest.
+# Điểm
+# 59.9500
+# Đã chấm 22 giây trước
+
+# Chỉ số
+
+# ers
+# 59.95
+# f_delta
+# 1
+# penalty
+# 1
+# final_score
+# 59.95
+# total_count
+# 420
+# ttft_p50_ms
+# 53
+# ttft_p95_ms
+# 71
+# failed_count
+# 5
+# warmup_count
+# 0
+# accuracy_drop
+# 0
+# tbt_median_ms
+# 4
+# tokens_per_sec
+# 0.0515
+services:
+  model:
+    image: misokaio/ghfjdk@sha256:c6a8e1f733e7af11c27a90d3f35800d9c78315af76c5f6ef6aaa06e4770e4c10
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - VLLM_USE_FASTOKENS=1
+      - VLLM_CONFIGURE_LOGGING=0
+      - VLLM_LFM25_FUSED_SHORTCONV=1
+      - VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      - VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      - VLLM_LFM25_FUSED_SILU_FP8=1
+      - VLLM_LFM25_FUSED_SHORTCONV_FP8_OUT=1
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --quantization=fp8
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --optimization-level=3
+      - --gpu-memory-utilization=0.85
+      - --tensor-parallel-size=1
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --max-model-len=8192
+      - --max-num-batched-tokens=4096
+      - --max-num-seqs=32
+      - --disable-uvicorn-access-log
+      - --language-model-only
+      - --skip-mm-profiling
+      - --no-enable-log-requests
+      - --disable-log-stats
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

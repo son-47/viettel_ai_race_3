@@ -38,15 +38,17 @@ cũng đổi scheduler/batching sang `8192/4096/32`, nên số điểm 65.71 ch�
 ablation cô lập riêng cho SiLU-FP8.
 
 Mốc kernel fusion trước đó đạt 64.35, cao hơn control 63.94 nhưng có 6 failed
-request. Candidate RMSNorm→dynamic-FP8 chạy được trên L4 nhưng ERS thấp hơn rõ
-rệt, chưa được promote. External draft `LFM2.5-350M` đã bị loại sau lượt portal
-34.9. Vì vậy 65.71 vẫn là fallback/production choice cho tới khi có paired H200
-A/B và correctness gate cho candidate mới.
+request. Candidate ShortConv decode→FP8 out-projection đã được build/public và
+portal chấm **59.95** (53/71 ms, TBT 4 ms, 5 failed/420, accuracy_drop 0), thấp
+hơn control nên đã loại. External draft `LFM2.5-350M` cũng bị loại sau lượt
+portal 34.9. Vì vậy 65.71 vẫn là fallback/production choice; mọi kernel mới
+phải A/B xen kẽ với image này.
 
 ### Quyết định ngắn gọn
 
-- Giữ stock FCFS + `max-num-batched-tokens=8192` + `max-num-seqs=32` + context
-  32768 làm control H200.
+- Giữ đúng runtime flags của compose 65.71 làm control H200:
+  `max-model-len=8192`, `max-num-batched-tokens=4096`, `max-num-seqs=32`,
+  FCFS, chunked prefill và prefix caching.
 - Giữ image/compose 65.71 làm phương án nộp đã có bằng chứng portal.
 - Không dùng `processing`, interactivity, custom scheduler, `4096/32`,
   `8192/24`, Medusa hoặc external draft.
@@ -520,7 +522,8 @@ có checkpoint `/model`, nên không có ERS local mới cho PLD/ShortConv-FP8.
 | Stock online FP8 `8192/32` | H200 63.76/63.82/63.94 | Baseline/control |
 | Combined kernel + SiLU-FP8 | H200 **65.71**, 4 failed | **Giữ để nộp** |
 | ShortConv + QK + no-vstack | H200 64.35, 6 failed | Fallback/ứng viên cần lặp |
-| ShortConv online-FP8 đầy đủ | Build/public digest, chưa A/B đủ | Chờ paired H200/L4 |
+| ShortConv online-FP8 đầy đủ | H200 60.85 | Loại |
+| ShortConv decode→FP8 out_proj fusion | H200 **59.95**, 5 failed | **Loại, không tune tiếp** |
 | PLD/ngram rollback-safe | Parity harness 16/16, chưa E2E | Thí nghiệm |
 | RMSNorm dynamic-FP8 | L4 0.425014 | Không promote |
 | External 350M draft | Portal 34.9 | Loại |
@@ -534,6 +537,7 @@ Artifact/compose chính:
 
 - `submission/docker-compose_silu_fp8_65.71.yml`
 - `submission/docker-compose_shortconv_fused_64.35.yml`
+- `submission/docker-compose_shortconv_fp8_out_candidate_59.95.yml` (đã pin digest public, portal 59.95)
 - `submission/docker-compose_rmsnorm_fp8_candidate.yml`
 - `submission/docker-compose_shortconv_fp8_candidate.yml`
 - `submission/docker-compose_pld_safe_candidate.yml`
@@ -548,6 +552,7 @@ Artifact/compose chính:
 - `scripts/lfm25_matrix_rmsnorm_fp8_20260726.sh`
 - `harness/check_speculative_parity.py`
 - `eval/l4_compose_20260726/`
+- `submission/benchmark_lfm25_w2_norm_quant_pair.py`
 
 Nguồn kỹ thuật:
 
@@ -564,12 +569,85 @@ Nguồn kỹ thuật:
 - [Medusa paper](https://arxiv.org/abs/2401.10774)
 - EACL 2026 paper: `2026.eacl-long.255.pdf`
 
+## 14. Cập nhật mới nhất: portal candidate và CUTLASS SM90 EVT
+
+### Candidate đã push public nhưng không được promote
+
+Image `misokaio/ghfjdk@sha256:c6a8e1f733e7af11c27a90d3f35800d9c78315af76c5f6ef6aaa06e4770e4c10`
+đã được registry xác nhận manifest v2 và portal đã xử lý 420 request (5 failed).
+Compose
+tương ứng là `submission/docker-compose_shortconv_fp8_out_candidate_59.95.yml`;
+file đã được workspace đổi tên theo kết quả portal. Kết quả 59.95 xác nhận rằng
+giảm một quantizer bằng cách ghi FP8 sau ShortConv không bù được parallelism/
+traffic cost của đường decode. Giữ image này để tái lập, nhưng không thay control
+65.71 và không tiếp tục sweep block/warp hoặc tăng batch-token.
+
+### Audit CUTLASS 4.2.1 trên SM90/H200
+
+Môi trường image: vLLM 0.25.1, PyTorch 2.11.0+cu130, CUDA 13.0.88, CUTLASS
+headers 4.2.1; LFM2.5 có hidden 2048, intermediate 8192, 16 layer (10
+ShortConv, 6 attention). `w2` là `A[M,8192] × B[8192,2048]`, decode `M=1..32`.
+SM90 FP8 dispatch của vLLM dùng `swap_ab=true`: tile `64×16×256` cho `M≤16`,
+`64×64×256` cho `16<M≤64`; 2048 channel bị chia thành 32 CTA. Vì
+`Sm90RowReduction` chỉ trả partial/final statistic ở `end()`, EVT thuần không
+thể lấy inverse-RMS rồi phát ngược kết quả cho các fragment đã ghi. Do đó mục
+tiêu “w2 → residual add → RMSNorm → FP8 trong đúng một EVT launch” không khả thi
+với tile hiện tại nếu không đổi sang cooperative/cluster epilogue.
+
+### Thiết kế được khuyến nghị
+
+Giữ đúng hai BF16 rounding boundary của baseline:
+
+```text
+w2_bf16       = bf16(scale_a * scale_b * accumulator_fp32)
+residual_out  = bf16(residual_bf16 + w2_bf16)
+sumsq         = sum(float(residual_out)^2)
+weighted_amax = max(abs(float(residual_out) * float(next_norm_weight)))
+inv_rms       = rsqrt(sumsq / 2048 + 1e-5)
+fp8_scale     = weighted_amax * inv_rms / 448
+```
+
+**M0 (prototype):** CUTLASS EVT gộp dequant, residual add, BF16 store và hai
+partial reductions; kernel phụ đọc residual/stats rồi RMSNorm/FP8. Dùng PDL để
+giảm gap/preamble, nhưng không giả định overlap là bắt buộc. Workspace cố định
+cho `M≤32` khoảng 9 KiB và phải capture-safe.
+
+**M1 (hướng có gain lớn nhất):** không materialize tensor normalized; projection
+kế tiếp đọc `residual_out`, stats và `next_norm_weight` trong mainloop. Sáu
+boundary vào attention có thể convert FP8 ngay trước QKV MMA; chín boundary vào
+ShortConv giữ BF16 `in_proj` vì full ShortConv online-FP8 đã chỉ đạt 60.85.
+Đây mới là cách có thể bỏ một launch trên mỗi layer mà không cần global barrier.
+
+**M2 (rủi ro cao):** cooperative/cluster epilogue tự giữ tile, reduce rồi ghi
+normalized FP8. Hopper portable cluster tối đa 8 CTA (H100/H200 có thể opt-in
+16), trong khi dispatch hiện tại dùng 32 CTA theo chiều output; chỉ thử nếu M0
+đo được gain ≥8% ở M=4..32 và M1 không tích hợp được.
+
+### Gate triển khai tiếp theo
+
+Benchmark trên H200 với CUDA Graph on/off, 2.000 replay cho `M=1,2,4,8,16,32`:
+`stock w2 + fused RMSNorm/quant` so với M0, M1-attention và M1-ShortConv. Thu
+Nsight về launch gap, DRAM bytes, registers, spills, occupancy và CTA count.
+Chỉ promote khi residual bit-exact, FP8 scale/bytes giữ parity, không spill/
+runtime allocation và paired portal score/TPOT tốt hơn control với failed không
+tăng. Chi tiết source audit và API tham khảo CUTLASS Hopper GEMM, visitor store,
+PDL/CUDA Graph ở các link chính thức dưới đây.
+
+- [vLLM SM90 FP8 dispatch](https://github.com/vllm-project/vllm/blob/v0.25.1/csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/scaled_mm_sm90_fp8_dispatch.cuh)
+- [vLLM fused RMSNorm + dynamic FP8](https://github.com/vllm-project/vllm/blob/v0.25.1/csrc/libtorch_stable/quantization/fused_kernels/fused_layernorm_dynamic_per_token_quant.cu)
+- [CUTLASS SM90 visitor reductions](https://github.com/NVIDIA/cutlass/blob/v4.2.1/include/cutlass/epilogue/fusion/sm90_visitor_store_tma_warpspecialized.hpp)
+- [CUTLASS Hopper GEMM API](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cpp/gemm_api_3x.md)
+- [CUTLASS dependent kernel launch](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cpp/dependent_kernel_launch.md)
+- [CUDA Programmatic Dependent Launch](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/programmatic-dependent-launch.html)
+- [Hopper thread-block clusters](https://docs.nvidia.com/cuda/archive/11.8.0/hopper-tuning-guide/index.html#thread-block-clusters)
+
 ## Tóm tắt cuối
 
-Trên H200, stock FCFS + `8192/32` là baseline tốt hơn các biến thể scheduler/
+Trên H200, stock FCFS với `max-model-len=8192`, `max-num-batched-tokens=4096`,
+`max-num-seqs=32` là baseline tốt hơn các biến thể scheduler/
 batch đã đo. Combined ShortConv/QK/no-vstack + SiLU-FP8 đạt 65.71, là mốc portal
-tốt nhất và nên giữ. L4 xác nhận xu hướng SiLU-FP8 nhưng không thay thế H200.
-Flags, online quantization và external speculative draft đã gần/chạm trần;
-không còn lý do tiếp tục sweep mù. Hướng có giá trị còn lại là ShortConv
-online-FP8 đầy đủ và PLD/ngram có rollback đúng, nhưng chỉ được promote sau
-paired A/B, parity, GPQA và failed-count gate.
+tốt nhất và nên giữ. Candidate ShortConv→FP8 out đạt 59.95 nên đã dừng. L4
+xác nhận xu hướng SiLU-FP8 nhưng không thay thế H200. Flags, online
+quantization và external speculative draft đã gần/chạm trần; không tiếp tục
+sweep mù. Hướng phát triển còn lại có giá trị nhất là CUTLASS SM90 EVT M0 rồi
+M1 normalized-load, với attention QKV là nhánh FP8 và ShortConv in-proj giữ BF16.

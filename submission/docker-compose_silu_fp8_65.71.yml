@@ -1,0 +1,76 @@
+# Điểm
+# 65.7100
+# Đã chấm 2 phút trước
+
+# Chỉ số
+
+# ers
+# 65.71
+# f_delta
+# 1
+# penalty
+# 1
+# final_score
+# 65.71
+# total_count
+# 420
+# ttft_p50_ms
+# 32
+# ttft_p95_ms
+# 47
+# failed_count
+# 4
+# warmup_count
+# 0
+# accuracy_drop
+# 0
+# tbt_median_ms
+# 4
+# tokens_per_sec
+# 0.0568
+services:
+  model:
+    image: misokaio/ghfjdk@sha256:bbda70fede826b43dbd8b92bb03fb880009c9c55162df4ba8a98f0325e9be2f4
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - VLLM_USE_FASTOKENS=1
+      - VLLM_CONFIGURE_LOGGING=0
+      - VLLM_LFM25_FUSED_SHORTCONV=1
+      - VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      - VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      - VLLM_LFM25_FUSED_SILU_FP8=1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model
+      - --quantization=fp8
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --optimization-level=3
+      - --gpu-memory-utilization=0.85
+      - --tensor-parallel-size=1
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # - --performance-mode=interactivity
+      - --max-model-len=8192
+      - --max-num-batched-tokens=4096
+      - --max-num-seqs=32
+      - --disable-uvicorn-access-log
+      - --language-model-only
+      - --skip-mm-profiling
+      - --no-enable-log-requests
+      - --disable-log-stats
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
