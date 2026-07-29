@@ -1,7 +1,0 @@
-services:
-  model:
-    volumes:
-      - /home/zeus/content/model-lfm25:/model:ro
-      - /home/zeus/content:/work:ro
-      - /home/zeus/content/results_l4:/results
-      - /home/zeus/content/vllm-cache:/root/.cache

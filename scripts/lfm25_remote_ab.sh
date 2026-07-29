@@ -6,9 +6,13 @@ set -euo pipefail
 
 case_name="${1:-control}"
 image="${IMAGE:-misokaio/ghfjdk:v0.25.1}"
+best_image="${BEST_IMAGE:-misokaio/ghfjdk@sha256:bbda70fede826b43dbd8b92bb03fb880009c9c55162df4ba8a98f0325e9be2f4}"
+lmhead_fp8_image="${LMHEAD_FP8_IMAGE:-misokaio/ghfjdk@sha256:2be86725b37a2853d601a7acd55d3fb37906d50ef787a0b7367761fe8e27647e}"
 medusa_image="${MEDUSA_IMAGE:-vinhdq17/vllm_openai:r2-mtp-v2@sha256:362cde8ce35879fdf90f9b14b95892ad48821e60418a41052e0593632d69c71f}"
 medusa_fused_image="${MEDUSA_FUSED_IMAGE:-misokaio/ghfjdk:v0.25.1-medusa-fused-k3}"
 shortconv_fp8_image="${SHORTCONV_FP8_IMAGE:-vinhdq17/vllm_openai:r2-int4-v1@sha256:02c9bd96aaa093181a9d6f6c869f970f99e2835ccaa0235da99d8b47d75a4673}"
+shortconv_fp8_fused_image="${SHORTCONV_FP8_FUSED_IMAGE:-misokaio/ghfjdk@sha256:fdc694b7282a591428debbcbb9ae2424bfb5c2905d7950f536c13495a04ac829}"
+pld_safe_image="${PLD_SAFE_IMAGE:-misokaio/ghfjdk@sha256:d1a4d9bab96cfcaaffbfb531bf7935abcd97ab70787fc4a08eafdc593494eff1}"
 lean_image="${LEAN_IMAGE:-vinhdq17/vllm_openai:r2-lean-v1@sha256:830c965106119ad3d9bafffa7a5b78242f3bb9e3fcd8442cf26f7a5606abaffc}"
 workspace="${WORKSPACE:-/home/zeus/content}"
 model_dir="${MODEL_DIR:-$workspace/model-lfm25}"
@@ -47,6 +51,45 @@ esac
 
 case "$case_name" in
   control|cold_control) ;;
+  best_control|best_stream2|best_stream4|best_mrv2)
+    # Exact image, fusions, and scheduler from the 65.71 portal result.  Each
+    # candidate below changes one control-plane setting only.
+    image="$best_image"
+    max_model_len=8192
+    max_batched_tokens=4096
+    max_seqs=32
+    extra_env+=(
+      --env VLLM_LFM25_FUSED_SHORTCONV=1
+      --env VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      --env VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      --env VLLM_LFM25_FUSED_SILU_FP8=1
+    )
+    case "$case_name" in
+      best_stream2) extra_args+=(--stream-interval=2) ;;
+      best_stream4) extra_args+=(--stream-interval=4) ;;
+      best_mrv2) extra_env+=(--env VLLM_USE_V2_MODEL_RUNNER=1) ;;
+    esac
+    ;;
+  lmhead_fp8_control|lmhead_fp8)
+    # Same patched image on both arms; only the native-FP8 logits projection
+    # flag changes. Keep every other bit equal to portal 65.71.
+    image="$lmhead_fp8_image"
+    max_model_len=8192
+    max_batched_tokens=4096
+    max_seqs=32
+    extra_env+=(
+      --env VLLM_LFM25_FUSED_SHORTCONV=1
+      --env VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      --env VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      --env VLLM_LFM25_FUSED_SILU_FP8=1
+      --env VLLM_LFM25_FP8_LM_HEAD_REQUIRE_CUTLASS=1
+    )
+    if [[ "$case_name" == lmhead_fp8 ]]; then
+      extra_env+=(--env VLLM_LFM25_FP8_LM_HEAD=1)
+    else
+      extra_env+=(--env VLLM_LFM25_FP8_LM_HEAD=0)
+    fi
+    ;;
   fp8_per_tensor) quant_args=(--quantization=fp8_per_tensor) ;;
   fp8_per_block) quant_args=(--quantization=fp8_per_block) ;;
   fp8_per_channel) quant_args=(--quantization=fp8_per_channel) ;;
@@ -180,6 +223,24 @@ case "$case_name" in
   ngram_gpu3)
     extra_args+=('--speculative-config={"method":"ngram_gpu","num_speculative_tokens":3,"prompt_lookup_min":2,"prompt_lookup_max":3}')
     ;;
+  pld_safe_control|pld_safe1|pld_safe2|pld_safe3|pld_safe15)
+    # Keep both the control and speculative runs on the rollback-patched image
+    # and on the 65.71 scheduler. This isolates PLD from image/config drift.
+    image="$pld_safe_image"
+    max_model_len=8192
+    max_batched_tokens=4096
+    max_seqs=32
+    extra_env+=(
+      --env VLLM_LFM25_FUSED_SHORTCONV=1
+      --env VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      --env VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      --env VLLM_LFM25_FUSED_SILU_FP8=1
+    )
+    if [[ "$case_name" != pld_safe_control ]]; then
+      spec_tokens="${case_name#pld_safe}"
+      extra_args+=("--speculative-config={\"method\":\"ngram\",\"num_speculative_tokens\":$spec_tokens,\"prompt_lookup_min\":3,\"prompt_lookup_max\":3}")
+    fi
+    ;;
   suffix8)
     extra_deps+=(arctic-inference)
     extra_args+=('--speculative-config={"method":"suffix","num_speculative_tokens":8,"suffix_decoding_max_tree_depth":24,"suffix_decoding_max_cached_requests":10000,"suffix_decoding_max_spec_factor":1.0,"suffix_decoding_min_token_prob":0.1}')
@@ -241,6 +302,20 @@ case "$case_name" in
     # projection linears instead of silently leaving them in BF16.
     image="$shortconv_fp8_image"
     fastokens=0
+    ;;
+  shortconv_fp8_fused)
+    # Same 65.71 fused base and scheduler as the control; the only source
+    # change is upstream PR #48917 propagating online FP8 to ShortConv.
+    image="$shortconv_fp8_fused_image"
+    max_model_len=8192
+    max_batched_tokens=4096
+    max_seqs=32
+    extra_env+=(
+      --env VLLM_LFM25_FUSED_SHORTCONV=1
+      --env VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      --env VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      --env VLLM_LFM25_FUSED_SILU_FP8=1
+    )
     ;;
   lean_decode)
     # CPU/control-plane experiment for the 3-vCPU grader. Keep separate from

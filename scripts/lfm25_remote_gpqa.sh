@@ -7,6 +7,7 @@ set -euo pipefail
 
 case_name="${1:-control}"
 image="${IMAGE:-misokaio/ghfjdk:v0.25.1}"
+lmhead_fp8_image="${LMHEAD_FP8_IMAGE:-misokaio/ghfjdk@sha256:2be86725b37a2853d601a7acd55d3fb37906d50ef787a0b7367761fe8e27647e}"
 workspace="${WORKSPACE:-/home/zeus/content}"
 model_dir="${MODEL_DIR:-$workspace/model-lfm25}"
 draft_model_dir="${DRAFT_MODEL_DIR:-$workspace/model-lfm25-350m}"
@@ -24,6 +25,21 @@ quant_args=(--quantization=fp8)
 case "$case_name" in
   bf16) quant_args=() ;;
   control) ;;
+  lmhead_fp8_control|lmhead_fp8)
+    image="$lmhead_fp8_image"
+    extra_env+=(
+      --env VLLM_LFM25_FUSED_SHORTCONV=1
+      --env VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      --env VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      --env VLLM_LFM25_FUSED_SILU_FP8=1
+      --env VLLM_LFM25_FP8_LM_HEAD_REQUIRE_CUTLASS=1
+    )
+    if [[ "$case_name" == lmhead_fp8 ]]; then
+      extra_env+=(--env VLLM_LFM25_FP8_LM_HEAD=1)
+    else
+      extra_env+=(--env VLLM_LFM25_FP8_LM_HEAD=0)
+    fi
+    ;;
   fp8_per_tensor) quant_args=(--quantization=fp8_per_tensor) ;;
   fp8_per_block) quant_args=(--quantization=fp8_per_block) ;;
   fp8_per_channel) quant_args=(--quantization=fp8_per_channel) ;;
