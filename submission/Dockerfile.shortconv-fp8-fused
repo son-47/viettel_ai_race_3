@@ -1,0 +1,19 @@
+FROM misokaio/ghfjdk@sha256:bbda70fede826b43dbd8b92bb03fb880009c9c55162df4ba8a98f0325e9be2f4
+
+ENV VLLM_LFM25_FUSED_SHORTCONV_FP8=1
+
+COPY apply_lfm25_shortconv_fp8_fusion.py /tmp/apply_lfm25_shortconv_fp8_fusion.py
+COPY lfm25_fused_shortconv_fp8.py /tmp/lfm25_fused_shortconv_fp8.py
+COPY test_lfm25_fused_shortconv_fp8.py /opt/lfm25/test_lfm25_fused_shortconv_fp8.py
+
+RUN python3 /tmp/apply_lfm25_shortconv_fp8_fusion.py \
+      --kernel-source /tmp/lfm25_fused_shortconv_fp8.py \
+      --self-test \
+    && python3 -m py_compile \
+      /tmp/apply_lfm25_shortconv_fp8_fusion.py \
+      /tmp/lfm25_fused_shortconv_fp8.py \
+      /opt/lfm25/test_lfm25_fused_shortconv_fp8.py \
+    && rm -f \
+      /tmp/apply_lfm25_shortconv_fp8_fusion.py \
+      /tmp/lfm25_fused_shortconv_fp8.py
+

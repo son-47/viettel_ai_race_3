@@ -1,0 +1,60 @@
+# DFlash candidate derived from docker-compose_silu_fp8_65.71.yml.
+#
+# The image is pinned to the public digest below; submit this file as-is.
+# This candidate has not yet been benchmarked on the portal; keep the 65.71
+# compose as the rollback control.
+services:
+  model:
+    image: misokaio/ghfjdk@sha256:1409fb0efd3405f67f6b3a07aea779943cc26df860a49d78be6a9528ae8cdb2e
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - VLLM_USE_FASTOKENS=1
+      - VLLM_CONFIGURE_LOGGING=0
+      - VLLM_ENABLE_V1_MULTIPROCESSING=0
+      - VLLM_LFM25_FUSED_SHORTCONV=1
+      - VLLM_LFM25_BYPASS_SINGLE_VSTACK=1
+      - VLLM_LFM25_FUSED_QK_NORM_ROPE=1
+      - VLLM_LFM25_FUSED_SILU_FP8=1
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - RAYON_NUM_THREADS=1
+      - TOKENIZERS_PARALLELISM=false
+    entrypoint:
+      - python3 # Don't change this to vllm-server.
+      - -m # Don't change this to vllm-server.
+      - vllm.entrypoints.openai.api_server # Don't change this to vllm-server.
+    command:
+      - --model=/model
+      - --quantization=fp8
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --optimization-level=3
+      - --gpu-memory-utilization=0.95
+      - --tensor-parallel-size=1
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --async-scheduling
+      - --max-model-len=8192
+      - --max-num-batched-tokens=4096
+      - --max-num-seqs=32
+      - --override-generation-config
+      - '{"temperature":0.0}'
+      - --speculative-config
+      - '{"method":"dflash","model":"/draft-dflash","num_speculative_tokens":3,"draft_tensor_parallel_size":1,"attention_backend":"flash_attn","max_model_len":8192}'
+      - --disable-uvicorn-access-log
+      - --language-model-only
+      - --skip-mm-profiling
+      - --no-enable-log-requests
+      - --disable-log-stats
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

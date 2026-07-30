@@ -1,0 +1,79 @@
+# syntax=docker/dockerfile:1.7
+
+# This is the 65.71 SiLU/FP8 image with the vLLM #44296 ShortConv rollback
+# backport.  The rollback fix is required for lossless speculative verification
+# with the recurrent LFM2.5 target.
+FROM misokaio/ghfjdk@sha256:d1a4d9bab96cfcaaffbfb531bf7935abcd97ab70787fc4a08eafdc593494eff1
+
+ARG DFLASH_MODEL_ID=nathanrchn/LFM2.5-1.2B-Instruct-DFlash-v1
+ARG DFLASH_MODEL_REVISION=dee52da5ea67607ede76a906f6e30118f21aa036
+
+LABEL org.opencontainers.image.title="LFM2.5 SiLU/FP8 with DFlash v1" \
+      org.opencontainers.image.description="65.71 target optimizations, rollback-safe ShortConv verification, and a pinned LFM2.5 DFlash draft" \
+      org.opencontainers.image.base.name="misokaio/ghfjdk@sha256:d1a4d9bab96cfcaaffbfb531bf7935abcd97ab70787fc4a08eafdc593494eff1" \
+      org.opencontainers.image.draft.model="nathanrchn/LFM2.5-1.2B-Instruct-DFlash-v1" \
+      org.opencontainers.image.draft.revision="dee52da5ea67607ede76a906f6e30118f21aa036" \
+      org.opencontainers.image.vllm.shortconv-spec-fix="vllm-project/vllm#44296" \
+      org.opencontainers.image.vllm.lfm2-dflash-aux="EagleModelMixin backport"
+
+# DFlash is native in this vLLM commit, but LFM2 does not yet advertise or
+# produce the EAGLE3-style auxiliary hidden states consumed by DFlash.
+COPY apply_lfm25_dflash_aux.py /tmp/apply_lfm25_dflash_aux.py
+RUN python3 /tmp/apply_lfm25_dflash_aux.py \
+    && python3 -m py_compile \
+      /usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/lfm2.py \
+    && python3 - <<'PY'
+from pathlib import Path
+
+# Importing vLLM here would initialize CUDA/Triton and fails in a CPU-only
+# Docker builder with some otherwise valid vLLM/Torch combinations.  Validate
+# the backport statically; the competition runner performs the real GPU import.
+source = Path("/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/lfm2.py").read_text()
+assert "EagleModelMixin" in source
+assert "SupportsEagle3" in source
+assert "class Lfm2Model(nn.Module, EagleModelMixin):" in source
+assert "aux_hidden_states = self._maybe_add_hidden_state" in source
+PY
+RUN rm -f /tmp/apply_lfm25_dflash_aux.py
+
+# Bake the draft into the image because the competition runner is offline.
+# Only native-vLLM inputs are copied; dflash.py is deliberately excluded so no
+# Hugging Face remote code is executed at build time or at serving time.
+RUN python3 - <<PY
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="${DFLASH_MODEL_ID}",
+    revision="${DFLASH_MODEL_REVISION}",
+    local_dir="/draft-dflash",
+    allow_patterns=["config.json", "model.safetensors"],
+)
+PY
+
+# Pin both the checkpoint content and the architecture contract expected by
+# vLLM's native DFlashQwen3ForCausalLM loader.
+RUN echo "63dccd3a57c11e9bf1ea916aff5d50e524f09c594ec8abbd68601f43204837a3  /draft-dflash/model.safetensors" \
+      | sha256sum -c - \
+    && python3 - <<'PY'
+import json
+from pathlib import Path
+
+root = Path("/draft-dflash")
+config = json.loads((root / "config.json").read_text())
+
+assert config["architectures"] == ["DFlashDraftModel"]
+assert config["model_type"] == "qwen3"
+assert config["num_hidden_layers"] == 5
+assert config["hidden_size"] == 2048
+assert config["vocab_size"] == 65536
+assert config["block_size"] == 16
+assert config["dflash_config"]["mask_token_id"] == 64402
+assert config["dflash_config"]["target_layer_ids"] == [1, 4, 7, 10, 13]
+
+assert (root / "model.safetensors").stat().st_size == 524344560
+PY
+
+RUN rm -rf /draft-dflash/.cache \
+    && chmod -R a+rX /draft-dflash
+
+ENV DFLASH_MODEL_PATH=/draft-dflash

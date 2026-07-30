@@ -1,0 +1,52 @@
+services:
+  model:
+    image: misokaio/ghfjdk:r2-v026-fastokens
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - VLLM_ENABLE_V1_MULTIPROCESSING=0
+      - VLLM_TOKCACHE=1
+      - VLLM_TOKCACHE_SPLICE=1
+      - VLLM_SSE_SPLIT=1
+      - VLLM_CONV_FP8=1
+      - VLLM_BOOT_WARMUP=2
+      - VLLM_USE_FASTOKENS=1
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - RAYON_NUM_THREADS=1
+      - TOKENIZERS_PARALLELISM=false
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m  #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --quantization=fp8
+      - --optimization-level=3
+      # - --performance-mode=interactivity
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.85
+      - --max-num-batched-tokens=8192
+      - --max-num-seqs=64
+      - --tensor-parallel-size=1
+      - --enable-prefix-caching
+      - --async-scheduling
+      - --override-generation-config
+      - '{"temperature": 0.0}'
+      - --speculative-config
+      - '{"method":"dspark","model":"/draft","num_speculative_tokens":3,"draft_tensor_parallel_size":1,"quantization":"fp8"}'
+      - --no-enable-log-requests
+      - --disable-log-stats
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

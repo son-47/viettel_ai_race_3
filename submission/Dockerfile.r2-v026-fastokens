@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1.7
+
+# Build the dependency while network access is available. The serving
+# environment is offline, so the package is copied into the runtime image.
+FROM python:3.12-slim AS fastokens
+
+RUN python3 -m pip install \
+      --target=/fastokens \
+      --no-cache-dir \
+      --disable-pip-version-check \
+      --only-binary=:all: \
+      fastokens==0.2.0 \
+    && PYTHONPATH=/fastokens python3 -c \
+      "import importlib.metadata as m, fastokens; assert m.version('fastokens') == '0.2.0'; print('fastokens installed:', fastokens.__file__)"
+
+FROM vinhdq17/vllm_openai:r2-v026-final
+
+# Keep fastokens inside the runtime image; no network is required at serve time.
+COPY --from=fastokens /fastokens/ /opt/fastokens/
+ENV PYTHONPATH=/opt/fastokens:${PYTHONPATH}
+ENV VLLM_USE_FASTOKENS=1
+
+LABEL org.opencontainers.image.base.name="docker.io/vinhdq17/vllm_openai:r2-v026-final" \
+      org.opencontainers.image.description="vinhdq17/vllm_openai:r2-v026-final with fastokens 0.2.0"
